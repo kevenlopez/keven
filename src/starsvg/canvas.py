@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import importlib
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import List, Optional, Tuple, Union
+from typing import Iterable, List, Optional, Tuple, Union
 from xml.etree import ElementTree as ET
 
 PathLike = Union[str, Path]
@@ -22,7 +23,7 @@ class SVGPlacement:
 
 
 class StarSVGCanvas:
-    """Compose multiple SVGs in a single SVG output and export to PDF."""
+    """Compose multiple SVGs in a single SVG output and export to multiple formats."""
 
     def __init__(self, width: float, height: float, background: str = "transparent") -> None:
         self.width = width
@@ -98,6 +99,28 @@ class StarSVGCanvas:
 
         return group
 
+    @staticmethod
+    def _load_pdf_modules() -> tuple:
+        try:
+            render_pdf = importlib.import_module("reportlab.graphics.renderPDF")
+            svg_module = importlib.import_module("svglib.svglib")
+        except ModuleNotFoundError as exc:  # pragma: no cover
+            raise RuntimeError(
+                "PDF export requires svglib and reportlab. Install with: pip install starsvg[pdf]"
+            ) from exc
+        return render_pdf, svg_module
+
+    @staticmethod
+    def _load_png_modules() -> tuple:
+        try:
+            render_pm = importlib.import_module("reportlab.graphics.renderPM")
+            svg_module = importlib.import_module("svglib.svglib")
+        except ModuleNotFoundError as exc:  # pragma: no cover
+            raise RuntimeError(
+                "PNG export requires svglib and reportlab. Install with: pip install starsvg[png]"
+            ) from exc
+        return render_pm, svg_module
+
     def render_svg(self) -> str:
         """Render the composed SVG string."""
         ET.register_namespace("", SVG_NS)
@@ -127,26 +150,54 @@ class StarSVGCanvas:
         destination.write_text(self.render_svg(), encoding="utf-8")
         return destination
 
-    def save_pdf(self, output_path: PathLike) -> Path:
-        """Export the composed SVG to PDF using svglib + reportlab."""
-        try:
-            from reportlab.graphics import renderPDF
-            from svglib.svglib import svg2rlg
-        except ImportError as exc:  # pragma: no cover
-            raise RuntimeError(
-                "PDF export requires svglib and reportlab. Install with: pip install starsvg[pdf]"
-            ) from exc
-
-        destination = Path(output_path)
+    def _render_drawing(self):
         composed_svg = self.render_svg()
+        try:
+            svg_module = importlib.import_module("svglib.svglib")
+        except ModuleNotFoundError as exc:  # pragma: no cover
+            raise RuntimeError(
+                "SVG parsing requires svglib. Install with: pip install starsvg[pdf]"
+            ) from exc
 
         with NamedTemporaryFile("w", suffix=".svg", encoding="utf-8", delete=True) as temp_svg:
             temp_svg.write(composed_svg)
             temp_svg.flush()
-            drawing = svg2rlg(temp_svg.name)
+            drawing = svg_module.svg2rlg(temp_svg.name)
 
         if drawing is None:
-            raise RuntimeError("Could not parse composed SVG into a PDF drawing.")
+            raise RuntimeError("Could not parse composed SVG into a drawing.")
+        return drawing
 
-        renderPDF.drawToFile(drawing, str(destination))
+    def save_pdf(self, output_path: PathLike) -> Path:
+        """Export the composed SVG to PDF using svglib + reportlab."""
+        destination = Path(output_path)
+        render_pdf, _ = self._load_pdf_modules()
+        drawing = self._render_drawing()
+        render_pdf.drawToFile(drawing, str(destination))
         return destination
+
+    def save_png(self, output_path: PathLike, scale: float = 1.0) -> Path:
+        """Export the composed SVG to PNG using svglib + reportlab."""
+        if scale <= 0:
+            raise ValueError("scale must be greater than 0")
+
+        destination = Path(output_path)
+        render_pm, _ = self._load_png_modules()
+        drawing = self._render_drawing()
+        render_pm.drawToFile(drawing, str(destination), fmt="PNG", configPIL=None, showBoundary=False, dpi=72 * scale)
+        return destination
+
+    def save_png_resolutions(self, output_dir: PathLike, base_name: str, scales: Iterable[float]) -> List[Path]:
+        """Export the composed SVG to multiple PNG files at different scales."""
+        directory = Path(output_dir)
+        directory.mkdir(parents=True, exist_ok=True)
+
+        generated: List[Path] = []
+        for scale in scales:
+            if scale <= 0:
+                raise ValueError("all scales must be greater than 0")
+            scale_label = str(scale).replace(".", "_")
+            output_path = directory / f"{base_name}@{scale_label}x.png"
+            generated.append(self.save_png(output_path, scale=scale))
+
+        return generated

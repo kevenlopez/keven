@@ -55,7 +55,7 @@ def test_save_pdf_uses_svglib_and_reportlab(tmp_path: Path, monkeypatch) -> None
     monkeypatch.setitem(sys.modules, "svglib", types.SimpleNamespace())
     monkeypatch.setitem(sys.modules, "svglib.svglib", fake_svglib_module)
     monkeypatch.setitem(sys.modules, "reportlab", types.SimpleNamespace())
-    monkeypatch.setitem(sys.modules, "reportlab.graphics", types.SimpleNamespace(renderPDF=fake_render_pdf_module))
+    monkeypatch.setitem(sys.modules, "reportlab.graphics", types.SimpleNamespace())
     monkeypatch.setitem(sys.modules, "reportlab.graphics.renderPDF", fake_render_pdf_module)
 
     canvas = StarSVGCanvas(width=100, height=100)
@@ -69,18 +69,56 @@ def test_save_pdf_uses_svglib_and_reportlab(tmp_path: Path, monkeypatch) -> None
     assert called["drawing"] is not None
 
 
-def test_save_pdf_raises_without_pdf_dependencies(tmp_path: Path, monkeypatch) -> None:
+def test_save_png_and_resolutions(tmp_path: Path, monkeypatch) -> None:
+    calls = []
+
+    def fake_svg2rlg(_svg_path: str):
+        return object()
+
+    def fake_draw_to_file(_drawing, output_path: str, **kwargs) -> None:
+        calls.append((output_path, kwargs.get("dpi")))
+        Path(output_path).write_bytes(b"PNG")
+
+    fake_svglib_module = types.SimpleNamespace(svg2rlg=fake_svg2rlg)
+    fake_render_pm_module = types.SimpleNamespace(drawToFile=fake_draw_to_file)
+
+    monkeypatch.setitem(sys.modules, "svglib", types.SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "svglib.svglib", fake_svglib_module)
+    monkeypatch.setitem(sys.modules, "reportlab", types.SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "reportlab.graphics", types.SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "reportlab.graphics.renderPM", fake_render_pm_module)
+
+    canvas = StarSVGCanvas(width=200, height=200)
+    canvas.add_svg_content('<svg xmlns="http://www.w3.org/2000/svg"><circle cx="50" cy="50" r="10"/></svg>')
+
+    png = canvas.save_png(tmp_path / "single.png", scale=2)
+    generated = canvas.save_png_resolutions(tmp_path / "multi", "mapa", scales=[1, 3])
+
+    assert png.exists()
+    assert len(generated) == 2
+    assert generated[0].name == "mapa@1x.png"
+    assert generated[1].name == "mapa@3x.png"
+    assert calls[0][1] == 144
+    assert calls[1][1] == 72
+    assert calls[2][1] == 216
+
+
+def test_save_png_raises_without_png_dependencies(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "svglib", None)
     monkeypatch.setitem(sys.modules, "reportlab", None)
 
-    original_import = __import__
+    canvas = StarSVGCanvas(width=100, height=100)
 
-    def fake_import(name, *args, **kwargs):
-        if name.startswith("svglib") or name.startswith("reportlab"):
-            raise ImportError("missing")
-        return original_import(name, *args, **kwargs)
+    try:
+        canvas.save_png(tmp_path / "result.png")
+        assert False, "Expected RuntimeError"
+    except RuntimeError as exc:
+        assert "PNG export requires" in str(exc)
 
-    monkeypatch.setattr("builtins.__import__", fake_import)
+
+def test_save_pdf_raises_without_pdf_dependencies(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setitem(sys.modules, "svglib", None)
+    monkeypatch.setitem(sys.modules, "reportlab", None)
 
     canvas = StarSVGCanvas(width=100, height=100)
 
@@ -88,7 +126,7 @@ def test_save_pdf_raises_without_pdf_dependencies(tmp_path: Path, monkeypatch) -
         canvas.save_pdf(tmp_path / "result.pdf")
         assert False, "Expected RuntimeError"
     except RuntimeError as exc:
-        assert "requires svglib and reportlab" in str(exc)
+        assert "PDF export requires" in str(exc)
 
 
 def test_render_svg_invalid_input_raises_value_error() -> None:

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "starsvg"
 version = "0.1.0"
-description = "Compose multiple SVG files into one SVG and export to PDF"
+description = "Compose multiple SVG files into one SVG and export to PDF/PNG"
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [{ name = "StarSVG Team" }]
@@ -13,6 +13,7 @@ dependencies = []
 
 [project.optional-dependencies]
 pdf = ["svglib>=1.5.1", "reportlab>=4.0.0"]
+png = ["svglib>=1.5.1", "reportlab>=4.0.0"]
 dev = ["pytest>=8.0.0"]
 
 [tool.setuptools]
